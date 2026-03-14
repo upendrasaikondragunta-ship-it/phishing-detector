@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+.env
+
+# MacOS
+.DS_Store
+
+# Machine Learning Models (Optional depending on size, but we'll include it for the demo)
+# model.pkl
