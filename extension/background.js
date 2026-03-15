@@ -94,6 +94,22 @@ function handleScanResult(url, data, isExplicit, tabId) {
         
         chrome.action.setBadgeText({ text: badgeText, tabId: tabId });
         chrome.action.setBadgeBackgroundColor({ color: badgeColor, tabId: tabId });
+
+        // NEW: ** Pop out banner on webpage itself **
+        if (status === "PHISHING" || status === "SUSPICIOUS") {
+            try {
+                // Send message to the content script in the active tab to show the banner
+                chrome.tabs.sendMessage(tabId, {
+                    action: "show_warning",
+                    data: data
+                }).catch(err => {
+                    // Ignore errors if content script isn't loaded on the tab yet (e.g. chrome://)
+                    console.log("Could not send warning to content script:", err);
+                });
+            } catch (err) {
+                console.log("Error messaging content script:", err);
+            }
+        }
     }
 
     // 2. Push Native Notifications
