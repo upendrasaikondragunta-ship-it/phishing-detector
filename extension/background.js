@@ -1,7 +1,7 @@
 // background.js
 // V3 - Phase 3 Upgrades: Auto-Scanning and Email Link Context Menus
 
-const API_URL = "http://127.0.0.1:5000/predict";
+const API_URL = "https://phishing-detector-3o4g.onrender.com/predict";
 
 // Create context menu for right-clicking links (e.g., in Gmail/Outlook)
 chrome.runtime.onInstalled.addListener(() => {

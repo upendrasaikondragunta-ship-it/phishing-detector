@@ -1,216 +1,883 @@
-document.addEventListener('DOMContentLoaded', function() {
-  // UI Elements
+document.addEventListener('DOMContentLoaded', function () {
+
+  // =========================================================
+  // UI ELEMENTS
+  // =========================================================
+
   const currentUrlElement = document.getElementById('current-url');
   const loadingElement = document.getElementById('loading');
   const resultElement = document.getElementById('result');
+
   const errorElement = document.getElementById('error');
   const errorMessageElement = document.getElementById('error-message');
   const retryBtn = document.getElementById('retry-btn');
-  
+
   const statusBadge = document.getElementById('status-badge');
   const statusIcon = document.getElementById('status-icon');
   const statusText = document.getElementById('status-text');
-  
+
   const threatScoreElement = document.getElementById('threat-score');
   const scoreBarFill = document.getElementById('score-bar-fill');
+
   const reasonsList = document.getElementById('reasons-list');
-  
-  const demoModeToggle = document.getElementById('demo-mode-toggle');
+
+  const demoModeToggle =
+    document.getElementById('demo-mode-toggle');
+
+
+  // =========================================================
+  // STATE
+  // =========================================================
 
   let activeUrl = "";
   let activeTabId = null;
 
-  // 1. Initialize
+
+  // =========================================================
+  // INITIALIZE
+  // =========================================================
+
   init();
 
+
   function init() {
-    // Check if demo mode was previously toggled (save state in localStorage if needed)
-    demoModeToggle.checked = localStorage.getItem('demoMode') === 'true';
-    
-    // Also save it to chrome storage so the background script can read it for auto-scans
+
+    // Restore Demo Mode
+    demoModeToggle.checked =
+      localStorage.getItem('demoMode') === 'true';
+
+
+    // Save Demo Mode to Chrome storage
     if (chrome.storage && chrome.storage.local) {
-      chrome.storage.local.set({ demoMode: demoModeToggle.checked });
+
+      chrome.storage.local.set({
+        demoMode: demoModeToggle.checked
+      });
+
     }
-    
-    demoModeToggle.addEventListener('change', (e) => {
-      localStorage.setItem('demoMode', e.target.checked);
-      if (chrome.storage && chrome.storage.local) {
-        chrome.storage.local.set({ demoMode: e.target.checked });
-      }
-      if(activeUrl) {
-          startAnalysis(activeUrl); // re-analyze immediately
-      }
-    });
 
-    retryBtn.addEventListener('click', () => {
-      if(activeUrl) startAnalysis(activeUrl);
-    });
 
-    // Get the current active tab
-    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-      if (tabs.length === 0) {
-        showError("Could not detect active tab.");
-        return;
+    // Demo Mode change
+    demoModeToggle.addEventListener(
+      'change',
+      function (event) {
+
+        const enabled =
+          event.target.checked;
+
+
+        localStorage.setItem(
+          'demoMode',
+          enabled
+        );
+
+
+        if (
+          chrome.storage &&
+          chrome.storage.local
+        ) {
+
+          chrome.storage.local.set({
+            demoMode: enabled
+          });
+
+        }
+
+
+        if (activeUrl) {
+
+          startAnalysis(activeUrl);
+
+        }
+
       }
+    );
 
-      activeUrl = tabs[0].url;
-      activeTabId = tabs[0].id;
-      currentUrlElement.textContent = activeUrl;
-      
-      // Ignore Chrome internal pages
-      if (activeUrl.startsWith('chrome://') || activeUrl.startsWith('edge://') || activeUrl.startsWith('about:') || activeUrl.startsWith('file://')) {
-        showInternalPageStatus();
-        chrome.action.setBadgeText({ text: "SAFE", tabId: activeTabId });
-        chrome.action.setBadgeBackgroundColor({ color: "#2ecc71", tabId: activeTabId });
-        return;
+
+    // Retry
+    retryBtn.addEventListener(
+      'click',
+      function () {
+
+        if (activeUrl) {
+
+          startAnalysis(activeUrl);
+
+        }
+
       }
+    );
 
-      startAnalysis(activeUrl);
-    });
+
+    // Get active tab
+    chrome.tabs.query(
+      {
+        active: true,
+        currentWindow: true
+      },
+      function (tabs) {
+
+        if (
+          !tabs ||
+          tabs.length === 0
+        ) {
+
+          showError(
+            "Could not detect active tab."
+          );
+
+          return;
+
+        }
+
+
+        activeUrl =
+          tabs[0].url || "";
+
+
+        activeTabId =
+          tabs[0].id;
+
+
+        currentUrlElement.textContent =
+          activeUrl;
+
+
+        // =====================================================
+        // INTERNAL BROWSER PAGES
+        // =====================================================
+
+        if (
+          activeUrl.startsWith("chrome://") ||
+          activeUrl.startsWith("edge://") ||
+          activeUrl.startsWith("about:") ||
+          activeUrl.startsWith("file://")
+        ) {
+
+          showInternalPageStatus();
+
+          setBadge(
+            "SAFE",
+            "#2ecc71"
+          );
+
+          return;
+
+        }
+
+
+        startAnalysis(activeUrl);
+
+      }
+    );
+
   }
+
+
+  // =========================================================
+  // START ANALYSIS
+  // =========================================================
 
   function startAnalysis(url) {
-    // Reset UI state
+
+    // Reset UI
     errorElement.classList.add('hidden');
+
     resultElement.classList.add('hidden');
+
     loadingElement.classList.remove('hidden');
 
-    const isDemoMode = demoModeToggle.checked;
 
-    // ** DEPLOYMENT UPDATE **
-    // Change this URL to your live backend URL (e.g. Render, Railway)
-    // Example: const API_URL = 'https://phishing-detector-api.onrender.com/predict';
-    const API_URL = 'http://127.0.0.1:5000/predict';
+    const isDemoMode =
+      demoModeToggle.checked;
 
-    // Send the URL to the Flask Backend
-    fetch(API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      // Pass demo mode configuration to the backend
-      body: JSON.stringify({ url: url, demo_mode: isDemoMode })
-    })
-    .then(response => {
-      if (!response.ok) {
-        throw new Error('Backend server error. Is Flask running?');
+
+    // =========================================================
+    // PRODUCTION FLASK BACKEND
+    // =========================================================
+
+    const API_URL =
+      'https://phishing-detector-3o4g.onrender.com/predict';
+
+
+    // =========================================================
+    // SEND REQUEST
+    // =========================================================
+
+    fetch(
+      API_URL,
+      {
+        method: 'POST',
+
+        headers: {
+          'Content-Type': 'application/json'
+        },
+
+        body: JSON.stringify({
+          url: url,
+          demo_mode: isDemoMode
+        })
       }
-      return response.json();
-    })
-    .then(data => {
-      if (data.error) {
-        throw new Error(data.error);
+    )
+
+
+    // =========================================================
+    // PROCESS RESPONSE
+    // =========================================================
+
+    .then(
+      async function (response) {
+
+        let data = {};
+
+
+        // Try to read JSON regardless
+        // of HTTP status code
+        try {
+
+          data = await response.json();
+
+        }
+        catch (error) {
+
+          data = {};
+
+        }
+
+
+        // =====================================================
+        // HTTP 400 - SECURITY BLOCK
+        // =====================================================
+
+        if (response.status === 400) {
+
+          displayBlocked(
+            data.reason ||
+            data.error ||
+            "URL rejected for security reasons."
+          );
+
+          return null;
+
+        }
+
+
+        // =====================================================
+        // HTTP 429 - RATE LIMIT
+        // =====================================================
+
+        if (response.status === 429) {
+
+          throw new Error(
+            data.error ||
+            "Too many requests. Please wait and try again."
+          );
+
+        }
+
+
+        // =====================================================
+        // OTHER SERVER ERRORS
+        // =====================================================
+
+        if (!response.ok) {
+
+          throw new Error(
+            data.error ||
+            `Backend returned HTTP ${response.status}.`
+          );
+
+        }
+
+
+        // =====================================================
+        // APPLICATION ERROR
+        // =====================================================
+
+        if (data.error) {
+
+          throw new Error(
+            data.error
+          );
+
+        }
+
+
+        return data;
+
       }
-      displayResults(data);
-    })
-    .catch(error => {
-      if (error.message.includes('Failed to fetch')) {
-        showError("Cannot connect to backend. Please ensure app.py is running on port 5000.");
-      } else {
-        showError(error.message);
+    )
+
+
+    // =========================================================
+    // DISPLAY RESULT
+    // =========================================================
+
+    .then(
+      function (data) {
+
+        // HTTP 400 already handled
+        if (!data) {
+
+          return;
+
+        }
+
+
+        displayResults(data);
+
       }
-    });
+    )
+
+
+    // =========================================================
+    // ERROR HANDLING
+    // =========================================================
+
+    .catch(
+      function (error) {
+
+        console.error(
+          "AI Phishing Detector Error:",
+          error
+        );
+
+
+        if (
+          error.message.includes(
+            "Failed to fetch"
+          )
+        ) {
+
+          showError(
+            "Cannot connect to the phishing detection backend. Please try again."
+          );
+
+        }
+        else {
+
+          showError(
+            error.message
+          );
+
+        }
+
+      }
+    );
+
   }
+
+
+  // =========================================================
+  // DISPLAY NORMAL RESULT
+  // =========================================================
 
   function displayResults(data) {
+
     loadingElement.classList.add('hidden');
+
     resultElement.classList.remove('hidden');
 
-    let badgeColor = "#2ecc71"; // Safe Green
-    let badgeText = "SAFE";
 
-    // 1. Status Badge & Icon
-    statusText.textContent = data.status;
-    
-    if (data.status === "SAFE") {     // 0-30
-      statusBadge.className = "badge safe";
-      statusIcon.innerHTML = "✅";
-      scoreBarFill.style.backgroundColor = "var(--safe-color)";
-    } else if (data.status === "SUSPICIOUS") { // 30-60
-      statusBadge.className = "badge suspicious";
-      statusIcon.innerHTML = "⚠️";
-      scoreBarFill.style.backgroundColor = "var(--warn-color)";
-      badgeColor = "#f39c12"; // Yellow
-      badgeText = "WARN";
-    } else {                          // 60-100
-      statusBadge.className = "badge phishing";
-      statusIcon.innerHTML = "🚨";
-      scoreBarFill.style.backgroundColor = "var(--danger-color)";
-      badgeColor = "#e74c3c"; // Red
-      badgeText = "DANGER";
-    }
-    
-    // Update the tiny icon hovering over the chrome URL bar 
-    if (activeTabId) {
-        chrome.action.setBadgeText({ text: badgeText, tabId: activeTabId });
-        chrome.action.setBadgeBackgroundColor({ color: badgeColor, tabId: activeTabId });
+    let badgeColor =
+      "#2ecc71";
+
+    let badgeText =
+      "SAFE";
+
+
+    // =========================================================
+    // SAFE
+    // =========================================================
+
+    if (
+      data.status === "SAFE"
+    ) {
+
+      statusBadge.className =
+        "badge safe";
+
+      statusIcon.innerHTML =
+        "✅";
+
+      statusText.textContent =
+        "SAFE";
+
+      scoreBarFill.style.backgroundColor =
+        "var(--safe-color)";
+
+      badgeColor =
+        "#2ecc71";
+
+      badgeText =
+        "SAFE";
+
     }
 
-    // 2. Threat Score Animation
-    animateScore(data.threat_score);
 
-    // 3. Reasons
-    reasonsList.innerHTML = ''; 
-    if (data.reasons && data.reasons.length > 0) {
-      data.reasons.forEach(reason => {
-        const li = document.createElement('li');
-        li.textContent = reason;
-        
-        // Highlight critical terms
-        if (reason.includes("CRITICAL")) {
-            li.style.color = "var(--danger-color)";
-            li.style.fontWeight = "bold";
-        }
-        
-        reasonsList.appendChild(li);
-      });
-    } else {
-      reasonsList.innerHTML = '<li>No security threats identified.</li>';
+    // =========================================================
+    // SUSPICIOUS
+    // =========================================================
+
+    else if (
+      data.status === "SUSPICIOUS"
+    ) {
+
+      statusBadge.className =
+        "badge suspicious";
+
+      statusIcon.innerHTML =
+        "⚠️";
+
+      statusText.textContent =
+        "SUSPICIOUS";
+
+      scoreBarFill.style.backgroundColor =
+        "var(--warn-color)";
+
+      badgeColor =
+        "#f39c12";
+
+      badgeText =
+        "WARN";
+
     }
+
+
+    // =========================================================
+    // PHISHING
+    // =========================================================
+
+    else if (
+      data.status === "PHISHING"
+    ) {
+
+      statusBadge.className =
+        "badge phishing";
+
+      statusIcon.innerHTML =
+        "🚨";
+
+      statusText.textContent =
+        "PHISHING";
+
+      scoreBarFill.style.backgroundColor =
+        "var(--danger-color)";
+
+      badgeColor =
+        "#e74c3c";
+
+      badgeText =
+        "DANGER";
+
+    }
+
+
+    // =========================================================
+    // UNKNOWN STATUS
+    // =========================================================
+
+    else {
+
+      statusBadge.className =
+        "badge suspicious";
+
+      statusIcon.innerHTML =
+        "⚠️";
+
+      statusText.textContent =
+        data.status ||
+        "UNKNOWN";
+
+      scoreBarFill.style.backgroundColor =
+        "var(--warn-color)";
+
+      badgeColor =
+        "#f39c12";
+
+      badgeText =
+        "WARN";
+
+    }
+
+
+    // Update Chrome badge
+    setBadge(
+      badgeText,
+      badgeColor
+    );
+
+
+    // =========================================================
+    // THREAT SCORE
+    // =========================================================
+
+    const score =
+      Number.isFinite(
+        Number(data.threat_score)
+      )
+        ? Number(data.threat_score)
+        : 0;
+
+
+    animateScore(
+      score
+    );
+
+
+    // =========================================================
+    // REASONS
+    // =========================================================
+
+    displayReasons(
+      data.reasons
+    );
+
   }
+
+
+  // =========================================================
+  // DISPLAY BLOCKED RESPONSE
+  // =========================================================
+
+  function displayBlocked(reason) {
+
+    loadingElement.classList.add('hidden');
+
+    errorElement.classList.add('hidden');
+
+    resultElement.classList.remove('hidden');
+
+
+    // =========================================================
+    // STATUS
+    // =========================================================
+
+    statusBadge.className =
+      "badge phishing";
+
+
+    statusIcon.innerHTML =
+      "🛑";
+
+
+    statusText.textContent =
+      "BLOCKED";
+
+
+    // =========================================================
+    // SCORE
+    // =========================================================
+
+    threatScoreElement.textContent =
+      "—";
+
+
+    scoreBarFill.style.width =
+      "0%";
+
+
+    scoreBarFill.style.backgroundColor =
+      "var(--danger-color)";
+
+
+    // =========================================================
+    // REASONS
+    // =========================================================
+
+    reasonsList.innerHTML =
+      "";
+
+
+    const reasonItem =
+      document.createElement('li');
+
+
+    reasonItem.textContent =
+      reason;
+
+
+    reasonItem.style.color =
+      "var(--danger-color)";
+
+
+    reasonItem.style.fontWeight =
+      "bold";
+
+
+    reasonsList.appendChild(
+      reasonItem
+    );
+
+
+    const securityItem =
+      document.createElement('li');
+
+
+    securityItem.textContent =
+      "Request blocked by backend security validation.";
+
+
+    reasonsList.appendChild(
+      securityItem
+    );
+
+
+    // =========================================================
+    // CHROME BADGE
+    // =========================================================
+
+    setBadge(
+      "BLOCK",
+      "#e74c3c"
+    );
+
+  }
+
+
+  // =========================================================
+  // DISPLAY REASONS
+  // =========================================================
+
+  function displayReasons(reasons) {
+
+    reasonsList.innerHTML =
+      "";
+
+
+    if (
+      Array.isArray(reasons) &&
+      reasons.length > 0
+    ) {
+
+      reasons.forEach(
+        function (reason) {
+
+          const li =
+            document.createElement('li');
+
+
+          li.textContent =
+            reason;
+
+
+          // Highlight CRITICAL messages
+          if (
+            String(reason)
+              .toUpperCase()
+              .includes("CRITICAL")
+          ) {
+
+            li.style.color =
+              "var(--danger-color)";
+
+            li.style.fontWeight =
+              "bold";
+
+          }
+
+
+          reasonsList.appendChild(
+            li
+          );
+
+        }
+      );
+
+    }
+    else {
+
+      reasonsList.innerHTML =
+        "<li>No security threats identified.</li>";
+
+    }
+
+  }
+
+
+  // =========================================================
+  // SCORE ANIMATION
+  // =========================================================
 
   function animateScore(targetScore) {
+
+    targetScore =
+      Math.max(
+        0,
+        Math.min(
+          100,
+          Number(targetScore) || 0
+        )
+      );
+
+
     let current = 0;
-    threatScoreElement.textContent = "0";
-    scoreBarFill.style.width = "0%";
-    
-    // Set final width immediately for CSS transition
-    setTimeout(() => {
-        scoreBarFill.style.width = `${targetScore}%`;
-    }, 50);
 
-    // Number counter animation
-    const duration = 1000;
-    const interval = 20;
-    const steps = duration / interval;
-    const stepValue = targetScore / steps;
 
-    const counter = setInterval(() => {
-      current += stepValue;
-      if (current >= targetScore) {
-        current = targetScore;
-        clearInterval(counter);
-      }
-      threatScoreElement.textContent = Math.floor(current);
-    }, interval);
+    threatScoreElement.textContent =
+      "0";
+
+
+    scoreBarFill.style.width =
+      "0%";
+
+
+    setTimeout(
+      function () {
+
+        scoreBarFill.style.width =
+          `${targetScore}%`;
+
+      },
+      50
+    );
+
+
+    const duration =
+      1000;
+
+
+    const interval =
+      20;
+
+
+    const steps =
+      duration / interval;
+
+
+    const stepValue =
+      targetScore / steps;
+
+
+    const counter =
+      setInterval(
+        function () {
+
+          current +=
+            stepValue;
+
+
+          if (
+            current >= targetScore
+          ) {
+
+            current =
+              targetScore;
+
+            clearInterval(
+              counter
+            );
+
+          }
+
+
+          threatScoreElement.textContent =
+            Math.floor(current);
+
+        },
+        interval
+      );
+
   }
+
+
+  // =========================================================
+  // INTERNAL PAGE STATUS
+  // =========================================================
 
   function showInternalPageStatus() {
+
     loadingElement.classList.add('hidden');
+
     resultElement.classList.remove('hidden');
-    
-    statusText.textContent = "SAFE";
-    statusBadge.className = "badge safe";
-    statusIcon.innerHTML = "🛡️";
-    threatScoreElement.textContent = "0";
-    scoreBarFill.style.width = "0%";
-    
-    reasonsList.innerHTML = "<li>Browser internal protected page.</li>";
+
+
+    statusText.textContent =
+      "SAFE";
+
+
+    statusBadge.className =
+      "badge safe";
+
+
+    statusIcon.innerHTML =
+      "🛡️";
+
+
+    threatScoreElement.textContent =
+      "0";
+
+
+    scoreBarFill.style.width =
+      "0%";
+
+
+    scoreBarFill.style.backgroundColor =
+      "var(--safe-color)";
+
+
+    reasonsList.innerHTML =
+      "<li>Browser internal protected page.</li>";
+
   }
 
-  function showError(message) {
-    loadingElement.classList.add('hidden');
-    errorElement.classList.remove('hidden');
-    errorMessageElement.textContent = message;
+
+  // =========================================================
+  // CHROME EXTENSION BADGE
+  // =========================================================
+
+  function setBadge(text, color) {
+
+    if (
+      activeTabId === null ||
+      activeTabId === undefined
+    ) {
+
+      return;
+
+    }
+
+
+    chrome.action.setBadgeText(
+      {
+        text: text,
+        tabId: activeTabId
+      }
+    );
+
+
+    chrome.action.setBadgeBackgroundColor(
+      {
+        color: color,
+        tabId: activeTabId
+      }
+    );
+
   }
+
+
+  // =========================================================
+  // ERROR UI
+  // =========================================================
+
+  function showError(message) {
+
+    loadingElement.classList.add('hidden');
+
+    resultElement.classList.add('hidden');
+
+    errorElement.classList.remove('hidden');
+
+
+    errorMessageElement.textContent =
+      message;
+
+
+    setBadge(
+      "ERR",
+      "#7f8c8d"
+    );
+
+  }
+
 });
