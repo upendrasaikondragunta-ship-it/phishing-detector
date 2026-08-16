@@ -7,3 +7,4 @@ beautifulsoup4==4.12.2
 requests==2.31.0
 python-whois==0.8.0
 gunicorn==22.0.0
+Flask-Limiter==3.5.0

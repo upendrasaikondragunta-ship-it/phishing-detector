@@ -9,6 +9,7 @@ import pandas as pd
 import ipaddress
 import socket
 import re
+
 from urllib.parse import urlparse
 
 from feature_extractor import extract_features, get_feature_names
@@ -21,6 +22,7 @@ from content_analyzer import analyze_webpage_content
 # =========================================================
 
 app = Flask(__name__)
+
 CORS(app)
 
 
@@ -56,6 +58,86 @@ except Exception as e:
 
 
 # =========================================================
+# TRUSTED DOMAINS
+# =========================================================
+#
+# These are exact trusted organizations/domains.
+#
+# IMPORTANT:
+# We only trust the actual domain or its subdomains.
+#
+# Example:
+# github.com             -> trusted
+# www.github.com         -> trusted
+# docs.github.com        -> trusted
+#
+# github.com.evil.xyz    -> NOT trusted
+#
+# =========================================================
+
+TRUSTED_DOMAINS = {
+    "github.com",
+    "githubusercontent.com",
+
+    "google.com",
+    "googleapis.com",
+
+    "microsoft.com",
+    "microsoftonline.com",
+    "live.com",
+    "office.com",
+
+    "amazon.com",
+    "amazonaws.com",
+
+    "apple.com",
+    "icloud.com",
+
+    "paypal.com",
+
+    "facebook.com",
+    "instagram.com",
+
+    "linkedin.com",
+
+    "python.org",
+
+    "mozilla.org",
+
+    "wikipedia.org",
+
+    "youtube.com",
+
+    "cloudflare.com",
+}
+
+
+def is_trusted_domain(hostname):
+    """
+    Check whether hostname belongs to a trusted domain.
+
+    Only exact domains or real subdomains are accepted.
+    """
+
+    if not hostname:
+        return False
+
+    hostname = hostname.lower().strip().rstrip(".")
+
+    for domain in TRUSTED_DOMAINS:
+
+        domain = domain.lower()
+
+        if hostname == domain:
+            return True
+
+        if hostname.endswith("." + domain):
+            return True
+
+    return False
+
+
+# =========================================================
 # URL SECURITY VALIDATION
 # =========================================================
 
@@ -86,7 +168,7 @@ def validate_request_url(url):
     if not hostname:
         return False, "URL does not contain a valid hostname."
 
-    hostname = hostname.lower().strip()
+    hostname = hostname.lower().strip().rstrip(".")
 
     # -----------------------------------------------------
     # LOCALHOST PROTECTION
@@ -96,7 +178,7 @@ def validate_request_url(url):
         "localhost",
         "localhost.localdomain",
         "ip6-localhost",
-        "ip6-loopback"
+        "ip6-loopback",
     }
 
     if hostname in blocked_hostnames:
@@ -232,7 +314,8 @@ def generate_blocked_response(reason):
 def calculate_threat_score(
     prob,
     domain_data,
-    content_features
+    content_features,
+    trusted_domain=False
 ):
 
     score = float(prob) * 100
@@ -243,10 +326,7 @@ def calculate_threat_score(
     # DOMAIN ANALYSIS
     # -----------------------------------------------------
 
-    if domain_data.get(
-        "is_suspicious",
-        False
-    ):
+    if domain_data.get("is_suspicious", False):
 
         score += 20
 
@@ -257,9 +337,9 @@ def calculate_threat_score(
 
     elif domain_data.get("status") == "unknown":
 
-        reasons.append(
-            "Domain age could not be verified."
-        )
+        # Do not penalize a site merely because WHOIS
+        # information is unavailable.
+        pass
 
     # -----------------------------------------------------
     # LOGIN FORMS
@@ -348,15 +428,22 @@ def calculate_threat_score(
     # -----------------------------------------------------
     # HIDDEN FIELDS
     # -----------------------------------------------------
+    #
+    # Hidden fields are common on legitimate websites.
+    # Therefore they are only mentioned, not directly
+    # added to the threat score.
+    #
+    # -----------------------------------------------------
 
     if content_features.get(
         "has_hidden_fields",
         0
     ) > 0:
 
-        reasons.append(
-            "Hidden form fields detected"
-        )
+        if not trusted_domain:
+            reasons.append(
+                "Hidden form fields detected"
+            )
 
     # -----------------------------------------------------
     # SUSPICIOUS KEYWORDS
@@ -465,22 +552,7 @@ def apply_security_rules(
     )
 
     # =====================================================
-    # 1. BRAND IMPERSONATION
-    # =====================================================
-
-    if brand_impersonation:
-
-        score = max(
-            score,
-            90
-        )
-
-        reasons.append(
-            "HIGH RISK: Brand impersonation pattern detected"
-        )
-
-    # =====================================================
-    # 2. NUMERIC / OBFUSCATED DOMAIN
+    # HOSTNAME
     # =====================================================
 
     hostname = (
@@ -498,6 +570,25 @@ def apply_security_rules(
     else:
 
         hostname_without_tld = hostname
+
+    # =====================================================
+    # 1. BRAND IMPERSONATION
+    # =====================================================
+
+    if brand_impersonation:
+
+        score = max(
+            score,
+            90
+        )
+
+        reasons.append(
+            "HIGH RISK: Brand impersonation pattern detected"
+        )
+
+    # =====================================================
+    # 2. NUMERIC / OBFUSCATED DOMAIN
+    # =====================================================
 
     numeric_sequence = re.search(
         r"\d{6,}",
@@ -667,6 +758,49 @@ def apply_security_rules(
 
 
 # =========================================================
+# TRUSTED DOMAIN ADJUSTMENT
+# =========================================================
+
+def apply_trusted_domain_policy(
+    score,
+    features,
+    url
+):
+    """
+    Prevent false positives on well-known trusted domains.
+
+    Strong URL-level attack indicators still override this
+    protection.
+    """
+
+    hostname = (
+        urlparse(url).hostname or ""
+    ).lower()
+
+    if not is_trusted_domain(hostname):
+        return score, False
+
+    # Strong indicators should NEVER be ignored.
+    strong_indicators = [
+        features.get("has_ip_address", 0),
+        features.get("has_at_symbol", 0),
+        features.get("has_punycode", 0),
+        features.get("has_brand_impersonation", 0),
+        features.get("suspicious_tld", 0),
+    ]
+
+    if any(strong_indicators):
+        return score, False
+
+    # Trusted domains should not become phishing merely
+    # because their pages contain forms, scripts, or
+    # hidden fields.
+    score = min(score, 10)
+
+    return score, True
+
+
+# =========================================================
 # STATUS
 # =========================================================
 
@@ -747,17 +881,9 @@ def predict():
         url
     )
 
-    # =====================================================
-    # IMPORTANT FIX
-    # =====================================================
-    #
-    # Security-blocked URLs are returned as HTTP 200 with
-    # status BLOCKED.
-    #
-    # This prevents the adversarial test from treating a
-    # security rejection as an API failure.
-    #
-    # =====================================================
+    # -----------------------------------------------------
+    # SECURITY BLOCK
+    # -----------------------------------------------------
 
     if not valid_url:
 
@@ -773,7 +899,6 @@ def predict():
                 security_error
             ), 200
 
-        # Other malformed/unsupported URLs remain HTTP 400.
         return jsonify({
             "error": "URL rejected for security reasons.",
             "reason": security_error
@@ -836,17 +961,30 @@ def predict():
         )
 
         # =================================================
-        # 5. BASE SCORE
+        # 5. CHECK TRUSTED DOMAIN
+        # =================================================
+
+        hostname = (
+            urlparse(url).hostname or ""
+        ).lower()
+
+        trusted_domain = is_trusted_domain(
+            hostname
+        )
+
+        # =================================================
+        # 6. BASE SCORE
         # =================================================
 
         threat_score, reasons = calculate_threat_score(
             ml_prob,
             domain_data,
-            content_features
+            content_features,
+            trusted_domain=trusted_domain
         )
 
         # =================================================
-        # 6. SECURITY RULE FUSION
+        # 7. SECURITY RULE FUSION
         # =================================================
 
         rule_score, rule_reasons = apply_security_rules(
@@ -860,11 +998,40 @@ def predict():
         for reason in rule_reasons:
 
             if reason not in reasons:
-
                 reasons.append(reason)
 
         # =================================================
-        # 7. STATUS
+        # 8. TRUSTED DOMAIN POLICY
+        # =================================================
+
+        threat_score, trusted_applied = (
+            apply_trusted_domain_policy(
+                threat_score,
+                features_dict,
+                url
+            )
+        )
+
+        if trusted_applied:
+
+            reasons = [
+                reason
+                for reason in reasons
+                if not reason.startswith(
+                    "Found "
+                )
+                and "Hidden form fields" not in reason
+                and "Multiple external scripts" not in reason
+                and "iframe" not in reason.lower()
+            ]
+
+            reasons.insert(
+                0,
+                "Trusted domain recognized; normal webpage elements were not treated as phishing indicators."
+            )
+
+        # =================================================
+        # 9. STATUS
         # =================================================
 
         status = determine_status(
@@ -872,7 +1039,7 @@ def predict():
         )
 
         # =================================================
-        # 8. ML EXPLANATION
+        # 10. ML EXPLANATION
         # =================================================
 
         ml_explanation = None
@@ -891,7 +1058,9 @@ def predict():
                 f"({ml_prob * 100:.0f}% model probability)"
             )
 
-        if ml_explanation:
+        # Do not allow a normal ML explanation to make
+        # trusted domains look dangerous.
+        if ml_explanation and not trusted_applied:
 
             reasons.insert(
                 0,
@@ -899,7 +1068,7 @@ def predict():
             )
 
         # =================================================
-        # 9. IP EXPLANATION
+        # 11. IP EXPLANATION
         # =================================================
 
         if features_dict.get(
@@ -925,7 +1094,19 @@ def predict():
                 )
 
         # =================================================
-        # 10. FALLBACK
+        # 12. TRUSTED DOMAIN CLEANUP
+        # =================================================
+
+        if trusted_applied:
+
+            status = "SAFE"
+            threat_score = min(
+                threat_score,
+                10
+            )
+
+        # =================================================
+        # 13. FALLBACK
         # =================================================
 
         if not reasons:
@@ -935,7 +1116,7 @@ def predict():
             )
 
         # =================================================
-        # 11. CONFIDENCE
+        # 14. CONFIDENCE
         # =================================================
 
         confidence = max(
@@ -943,8 +1124,17 @@ def predict():
             1 - ml_prob
         )
 
+        # For trusted domains, confidence should reflect
+        # the trusted-domain decision rather than exposing
+        # an alarming ML probability.
+        if trusted_applied:
+            confidence = max(
+                confidence,
+                0.95
+            )
+
         # =================================================
-        # 12. RESPONSE
+        # 15. RESPONSE
         # =================================================
 
         return jsonify({
@@ -991,7 +1181,7 @@ def health_check():
 
         "message": "Phishing Detection API is running!",
 
-        "version": "4.1"
+        "version": "4.2"
 
     })
 
@@ -1004,5 +1194,6 @@ if __name__ == "__main__":
 
     app.run(
         debug=True,
+        host="0.0.0.0",
         port=5000
     )

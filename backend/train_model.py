@@ -1,94 +1,383 @@
-import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, precision_score, recall_score, confusion_matrix
-import pickle
 import os
+import pickle
+import pandas as pd
+
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    roc_auc_score,
+    confusion_matrix
+)
 
 from feature_extractor import extract_features, get_feature_names
 
-def load_data(filepath):
-    """Loads data from a CSV file."""
-    df = pd.read_csv(filepath)
+
+# =========================================================
+# CONFIGURATION
+# =========================================================
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+DATASET_PATH = os.path.join(
+    BASE_DIR,
+    "..",
+    "dataset",
+    "phishing_dataset_real.csv"
+)
+
+MODEL_PATH = os.path.join(
+    BASE_DIR,
+    "model.pkl"
+)
+
+
+# =========================================================
+# LOAD DATASET
+# =========================================================
+
+def load_dataset():
+
+    print("=" * 60)
+    print("PHISHING DETECTOR - MODEL COMPARISON")
+    print("=" * 60)
+
+    print("\n[1/6] Loading real-world dataset...")
+
+    if not os.path.exists(DATASET_PATH):
+        raise FileNotFoundError(
+            f"Dataset not found:\n{DATASET_PATH}"
+        )
+
+    df = pd.read_csv(DATASET_PATH)
+
+    df = df.dropna(
+        subset=["url", "label"]
+    )
+
+    df = df.drop_duplicates(
+        subset=["url"]
+    )
+
+    print(f"Records: {len(df)}")
+    print(f"Safe: {sum(df['label'] == 0)}")
+    print(f"Phishing: {sum(df['label'] == 1)}")
+
     return df
 
-def train_and_evaluate_model():
-    """
-    Trains a robust Random Forest classifier and outputs comprehensive evaluation metrics
-    (Improvement 2 - Better Machine Learning Pipeline)
-    """
-    print("Loading dataset...")
-    data_path = os.path.join("..", "dataset", "phishing_dataset.csv")
-    
-    if not os.path.exists(data_path):
-        print(f"Error: Dataset not found at {data_path}")
-        return
-        
-    df = load_data(data_path)
-    print(f"Dataset loaded. Total records: {len(df)}")
-    
-    print("Extracting features from URLs (this may take a moment)...")
-    
-    # We apply our feature extraction function to each URL
-    # Now that extract_features returns a dict, we extract values in correct order
+
+# =========================================================
+# FEATURE EXTRACTION
+# =========================================================
+
+def extract_dataset_features(df):
+
+    print("\n[2/6] Extracting URL features...")
+
+    feature_names = get_feature_names()
+
     X = []
-    y = df['label'].values
-    
-    feature_keys = get_feature_names()
-    
-    for url in df['url']:
-        features_dict = extract_features(url)
-        # Convert dictionary to ordered list for ML model input
-        features_list = [features_dict[key] for key in feature_keys]
-        X.append(features_list)
-        
-    print("Features extracted successfully.")
-    
-    # Split the dataset into training and testing sets (80% train, 20% test)
-    print("\n[ML PIPELINE] Splitting data into 80% Train / 20% Test...")
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    
-    # Initialize the RandomForestClassifier with optimized parameters
-    print("[ML PIPELINE] Training RandomForest model...")
-    model = RandomForestClassifier(
-        n_estimators=150,       # Increased number of trees
-        max_depth=15,           # Prevent severe overfitting
-        random_state=42,
-        class_weight='balanced' # Handle potential slight imbalances
+
+    for index, url in enumerate(df["url"]):
+
+        features = extract_features(url)
+
+        X.append([
+            features[name]
+            for name in feature_names
+        ])
+
+        if (index + 1) % 10000 == 0:
+            print(
+                f"Processed {index + 1}/{len(df)} URLs..."
+            )
+
+    X = pd.DataFrame(
+        X,
+        columns=feature_names
     )
-    
-    # Train the model
-    model.fit(X_train, y_train)
-    
-    # Make predictions on the test set
+
+    y = df["label"].astype(int)
+
+    print(f"Features: {len(feature_names)}")
+
+    return X, y
+
+
+# =========================================================
+# MODEL EVALUATION
+# =========================================================
+
+def evaluate_model(name, model, X_test, y_test):
+
     predictions = model.predict(X_test)
-    
-    # Calculate evaluation metrics
-    print("\n================= MODEL EVALUATION =================")
-    
-    accuracy = accuracy_score(y_test, predictions)
-    precision = precision_score(y_test, predictions, zero_division=0)
-    recall = recall_score(y_test, predictions, zero_division=0)
-    conf_matrix = confusion_matrix(y_test, predictions)
-    
-    print(f"Accuracy Score:   {accuracy * 100:.2f}%")
-    print(f"Precision Score:  {precision * 100:.2f}%  (When it says Phishing, how often is it right?)")
-    print(f"Recall Score:     {recall * 100:.2f}%  (Out of all Phishing sites, how many did it catch?)")
-    
+
+    probabilities = model.predict_proba(X_test)[:, 1]
+
+    accuracy = accuracy_score(
+        y_test,
+        predictions
+    )
+
+    precision = precision_score(
+        y_test,
+        predictions,
+        zero_division=0
+    )
+
+    recall = recall_score(
+        y_test,
+        predictions,
+        zero_division=0
+    )
+
+    f1 = f1_score(
+        y_test,
+        predictions,
+        zero_division=0
+    )
+
+    roc_auc = roc_auc_score(
+        y_test,
+        probabilities
+    )
+
+    matrix = confusion_matrix(
+        y_test,
+        predictions
+    )
+
+    print("\n" + "=" * 60)
+    print(name)
+    print("=" * 60)
+
+    print(
+        f"Accuracy : {accuracy * 100:.2f}%"
+    )
+
+    print(
+        f"Precision: {precision * 100:.2f}%"
+    )
+
+    print(
+        f"Recall   : {recall * 100:.2f}%"
+    )
+
+    print(
+        f"F1 Score : {f1 * 100:.2f}%"
+    )
+
+    print(
+        f"ROC-AUC  : {roc_auc:.4f}"
+    )
+
     print("\nConfusion Matrix:")
-    print(f"True  SAFE (TN)      : {conf_matrix[0][0]}")
-    print(f"False PHISHING (FP)  : {conf_matrix[0][1]}  <-- Safe sites blocked (Annoying)")
-    print(f"False SAFE (FN)      : {conf_matrix[1][0]}  <-- Phishing sites missed (Dangerous)")
-    print(f"True  PHISHING (TP)  : {conf_matrix[1][1]}")
-    print("====================================================")
-    
-    # Save the trained model
-    model_filename = 'model.pkl'
-    print(f"\nSaving model as {model_filename}...")
-    with open(model_filename, 'wb') as file:
-        pickle.dump(model, file)
-        
-    print("Done! Model is fully trained and ready for the real-time API.")
+    print(matrix)
+
+    return {
+        "model": name,
+        "accuracy": accuracy,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "roc_auc": roc_auc
+    }
+
+
+# =========================================================
+# TRAINING
+# =========================================================
+
+def train_models():
+
+    df = load_dataset()
+
+    X, y = extract_dataset_features(
+        df
+    )
+
+    # -----------------------------------------------------
+    # Train/test split
+    # -----------------------------------------------------
+
+    print("\n[3/6] Splitting dataset...")
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X,
+        y,
+        test_size=0.20,
+        random_state=42,
+        stratify=y
+    )
+
+    print(
+        f"Training samples: {len(X_train)}"
+    )
+
+    print(
+        f"Testing samples : {len(X_test)}"
+    )
+
+    # -----------------------------------------------------
+    # Random Forest
+    # -----------------------------------------------------
+
+    print(
+        "\n[4/6] Training Random Forest..."
+    )
+
+    random_forest = RandomForestClassifier(
+        n_estimators=250,
+        max_depth=20,
+        min_samples_leaf=2,
+        class_weight="balanced",
+        random_state=42,
+        n_jobs=-1
+    )
+
+    random_forest.fit(
+        X_train,
+        y_train
+    )
+
+    # -----------------------------------------------------
+    # HistGradientBoosting
+    # -----------------------------------------------------
+
+    print(
+        "\n[5/6] Training HistGradientBoosting..."
+    )
+
+    gradient_boosting = HistGradientBoostingClassifier(
+        max_iter=250,
+        learning_rate=0.08,
+        max_leaf_nodes=31,
+        l2_regularization=1.0,
+        random_state=42
+    )
+
+    gradient_boosting.fit(
+        X_train,
+        y_train
+    )
+
+    # -----------------------------------------------------
+    # Evaluation
+    # -----------------------------------------------------
+
+    print(
+        "\n[6/6] Evaluating models..."
+    )
+
+    rf_results = evaluate_model(
+        "RANDOM FOREST",
+        random_forest,
+        X_test,
+        y_test
+    )
+
+    gb_results = evaluate_model(
+        "HIST GRADIENT BOOSTING",
+        gradient_boosting,
+        X_test,
+        y_test
+    )
+
+    # -----------------------------------------------------
+    # Compare
+    # -----------------------------------------------------
+
+    print("\n" + "=" * 60)
+    print("MODEL COMPARISON")
+    print("=" * 60)
+
+    results = [
+        rf_results,
+        gb_results
+    ]
+
+    results.sort(
+        key=lambda x: (
+            x["roc_auc"],
+            x["f1"],
+            x["recall"]
+        ),
+        reverse=True
+    )
+
+    for position, result in enumerate(
+        results,
+        start=1
+    ):
+
+        print(
+            f"{position}. {result['model']}"
+        )
+
+        print(
+            f"   ROC-AUC : {result['roc_auc']:.4f}"
+        )
+
+        print(
+            f"   F1      : {result['f1'] * 100:.2f}%"
+        )
+
+        print(
+            f"   Recall  : {result['recall'] * 100:.2f}%"
+        )
+
+    # -----------------------------------------------------
+    # Select best model
+    # -----------------------------------------------------
+
+    best_result = results[0]
+
+    if best_result["model"] == "RANDOM FOREST":
+
+        best_model = random_forest
+
+    else:
+
+        best_model = gradient_boosting
+
+    print(
+        f"\nBEST MODEL: {best_result['model']}"
+    )
+
+    # -----------------------------------------------------
+    # Save model
+    # -----------------------------------------------------
+
+    print(
+        f"\nSaving best model to:\n{MODEL_PATH}"
+    )
+
+    with open(
+        MODEL_PATH,
+        "wb"
+    ) as file:
+
+        pickle.dump(
+            best_model,
+            file
+        )
+
+    print(
+        "\nModel saved successfully."
+    )
+
+    print("\n" + "=" * 60)
+    print("MODEL TRAINING COMPLETE")
+    print("=" * 60)
+
+
+# =========================================================
+# MAIN
+# =========================================================
 
 if __name__ == "__main__":
-    train_and_evaluate_model()
+
+    train_models()
